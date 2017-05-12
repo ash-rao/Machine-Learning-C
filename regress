@@ -1,0 +1,103 @@
+clear
+
+## If file does not exist, message the user and exit program
+
+if ! [[ -f $1 ]]
+then
+	echo File $1 does not exist!
+	exit
+fi
+
+## First find the number of rows and the number of columns in the dataset
+
+NoOfRows=`wc -l $1 | cut -d " " -f 1`
+NoOfCols=`awk -F "," "{print NF}" < $1 | head -1`
+
+## The is_int function checks if the user has provided an integer or not, using the fact that -eq works on integer variables only
+## The is_valid function checks that the column number provided is greater than 0 and not greater that the total no of columns in the dataset
+
+function is_int() { return $([ "$@" -eq "$@" ]  > /dev/null 2>&1); }
+function is_valid() { return $([ "$@" -gt 0 -a "$@" -le $NoOfCols ]); }
+
+## If the first line has any field that is numerical only, it can't have a header in it
+
+HasNoHeader=`head -1 $1 | awk -F "," '/,[0-9.]+,/' | wc -l`  	#HasNoHeader stores 1 if no header, 0 if there is one 
+if [ $HasNoHeader = 0 ]  
+then
+	echo The header fields are these:
+	echo
+	head -1 $1 | tr ',' '\n' | awk '{printf("%4d : %s\n", NR,$0)}'  
+fi
+echo Please enter the field number for the field that is to be predicted:
+
+									## no_reg='^[0-9]+$'
+									## if ! [[ $PREDICT_VAR =~ $no_reg ]] ;
+
+while [ 1 -eq 1 ]; do
+	read PREDICT_VAR
+	if $(is_int $PREDICT_VAR) && $(is_valid $PREDICT_VAR)
+	then 
+		break	
+	else
+		echo  Integer between 1 and $NoOfCols only please..
+	fi
+done
+
+echo Enter field numbers of independent variables one by one, use 0 or invalid number to end:
+i=0 
+finis=0
+
+while [ $finis -eq 0 ]; do
+	read NEXTVAR
+	if $(is_int $NEXTVAR) && $(is_valid $NEXTVAR)
+	then
+		if [ $NEXTVAR -eq $PREDICT_VAR ]; then
+			echo Cannot use predictor variable as independent variable - ignoring. 
+			continue
+		fi
+
+		INDEP_VAR[$i]=$NEXTVAR
+		let i=i+1
+	else
+		if [ $i -eq 0 ] ; then
+			echo At least one independent variable must be entered ....
+		else
+			finis=1
+		fi
+	fi
+done
+
+## Cut to keep only the columns we need, and also change the delimited from comma to space for C program to process in next step
+
+s="cut -d ',' -f"
+stemp=$(printf ' %d' "${PREDICT_VAR}")
+s+=$stemp
+s+=' '
+s+=$1
+s+=" | tr ',' ' ' > firsttempfile"
+eval $s
+
+s="cut -d ',' -f "
+
+for ((j=0; j<i; j++ ))
+do
+	if [ $j -eq 0 ] 
+	then
+		stemp=$(printf '%d' "${INDEP_VAR[$j]}")
+	else
+		stemp=$(printf ',%d' "${INDEP_VAR[$j]}")
+	fi
+	s+=$stemp
+done
+
+NoOfCols=$(($i+1))	# To include all the independent variables selected plus the single predictor variable
+
+s+=' '
+s+=$1
+s+=" | tr ',' ' ' > secondtempfile"
+eval $s
+
+paste -d' ' firsttempfile secondtempfile > postprocessedfile
+rm firsttempfile secondtempfile
+
+./mainpgm postprocessedfile $NoOfRows $NoOfCols $HasNoHeader
